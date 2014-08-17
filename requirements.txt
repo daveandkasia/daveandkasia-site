@@ -1,0 +1,5 @@
+fabric
+typogrify>=2.0.4
+pelican
+markdown
+ghp-import
