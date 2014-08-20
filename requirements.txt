@@ -1,5 +1,8 @@
 fabric
 typogrify>=2.0.4
 pelican
+smugpy
+percache
+gitpython
 markdown
 ghp-import

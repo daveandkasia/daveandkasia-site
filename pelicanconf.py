@@ -1,5 +1,8 @@
 from __future__ import unicode_literals
 
+PLUGINS = ['pelican-smugpy']
+SMUGMUG_API_KEY = 'ChOHIeuSvpYEMeU5gtLb0ISPxszAQ0oS'
+
 SITENAME = 'runcible.industries'
 SITESUBTITLE = 'Kasia and Dave'
 
@@ -22,8 +25,9 @@ DIRECT_TEMPLATES = ['index', 'archives', 'tags', 'categories']
 # Static files to copy
 EXTRA_PATH_METADATA = {
   'extra/robots.txt': {'path': 'robots.txt'},
+  'extra/CNAME': {'path': 'CNAME'},
 }
-STATIC_PATHS = ('extra/robots.txt', )
+STATIC_PATHS = ('extra/robots.txt', 'extra/CNAME')
 
 # Theme/UI settings
 THEME = 'pelican-bootstrap3'

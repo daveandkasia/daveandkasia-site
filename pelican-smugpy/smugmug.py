@@ -1,124 +1,193 @@
-from smugpy import SmugMug
 from pelican import signals
-import logging, re, copy, os.path, urlparse
+from smugpy import SmugMug
+import percache
+import logging
 from sets import Set
+from collections import OrderedDict
+import os.path, re
+
+SMUGMUG_API_KEY = 'ChOHIeuSvpYEMeU5gtLb0ISPxszAQ0oS'
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-SMUGMUG_API_KEY = 'ChOHIeuSvpYEMeU5gtLb0ISPxszAQ0oS'
+# Persist SmugMug responses to disk between calls (via shelve module)
+# TODO: Invalidate stale cache based on mtime
+cache = None	
 
-class SmugMugClient():
+class SmugMugCache(SmugMug):
+	"""Caching wrapper for SmugMug API
 
-	def __init__(self, api_key=SMUGMUG_API_KEY):
-		self._smugmug = SmugMug(api_version='1.3.0',
-								app_name='pelican-smugpy',
-								api_key=api_key)
-		self.users = Set()
-		
-		self._albums = {}
-		self._albums_users = Set()
+	Disk cache (percache) avoids API calls during subsequent builds, results cached in 
+	memory during run and written to disk when object deleted or on cache.sync()/close()
+	"""
+	def __init__(self, *args, **kwargs):
+		if not 'api_version' in kwargs.keys():
+			kwargs['api_version'] = '1.3.0'
+		if not 'app_name' in kwargs.keys():
+			kwargs['app_name'] = 'pelican-smugpy'
 
-		logger.debug('Instantiated %s' % self.__class__)
+		super(SmugMugCache, self).__init__(*args, **kwargs)
 
-	@property
-	def albums(self):
-		if self._albums_users != self.users:
+	def __getattr__(self, *args, **kwargs):
+		parent = super(SmugMugCache, self).__getattr__(*args, **kwargs)
 
-			logging.debug('Cache miss, refreshing albums list')
-			
-			for user in self.users - self._albums_users:
+		@cache
+		def cacheable_result(*args, **kwargs):
+			logging.debug('Cache miss, calling SmugMug API')
+			return parent(*args, **kwargs)
 
-				logging.debug('Requesting albums for user %s' % user)
-				albums = self._smugmug.albums_get(NickName=user, Heavy=True)
-				for album in albums['Albums']:
-					self._albums[album['URL']] = album
+		return cacheable_result
 
-				logging.debug('Added %d albums for user %s' % (len(albums['Albums']), 
-															   user,))
-			# Update cached users list
-			self._albums_users = self.users.copy()
+# SmugMug API accessed via this object, frequent and redundant calls are OK due to caching
+smugmug = None
 
-		return self._albums
+# Prioritized dictionary keys match named properties of SmugMug Album objects,
+# values contain callable objects that accept to args: target and candidate match values.
+# Callable objects should return True if candidate "matches" target and False otherwise.
+album_match = OrderedDict([
+	('id',
+		lambda target, candidate: False),
+	('Key',
+		lambda target, candidate: target == candidate),
+	('URL',
+		lambda target, candidate: target in candidate),
+	('Title',
+		lambda target, candidate: target.strip().lower() == candidate.strip().lower()),
+	('NiceName',
+		lambda target, candidate: target == candidate),
+	('Description',
+		lambda target, candidate: False),
+])
 
-	def _process_album(self, album_url):
-		albums = self.albums
-		if album_url in albums.keys():
-			album = albums[album_url]
+# Map of SmugMug Image attributes to returned properties of template gallery object
+image_attribute_map = {
+	'gallery': {
+		'thumb': 'ThumbURL',
+		'image': 'X2LargeURL',
+	}
+}
+
+def get_album(username, album):
+	# Request user's albums from API
+	logging.debug('Requesting albums for user %s' % username)
+	albums = smugmug.albums_get(NickName=username, Heavy=True)
+	logging.debug('Received %d albums for user %s' % (len(albums['Albums']), username,))
+	
+	# Reference to specified album, will be updated with reference to API Album object
+	# that most closely matches criteria specific in album argument0
+	target = None
+
+	# Find album based on album criteria dictionary
+	for album_candidate in albums['Albums']:
+		for (key, match) in album_match.iteritems():
+			if match(album, album_candidate[key]):
+				target = album_candidate
+				break
 		else:
-			raise Exception('Cannot locate album: %s' % album_url)
+			# Called when album_candidate does not match criteria
+			continue
+		# Called when album_candidate matches criteria and break called from inner loop
+		break
+	else:
+		# Called when no album_candidate matches criteria
+		raise ValueError('Cannot locate album: %s' % repr(album))
 
-		logging.debug('Requesting images for album {URL}'.format(**album))
-		album = self._smugmug.images_get(AlbumID=album['id'],
-		                                  AlbumKey=album['Key'],
-		                                  Heavy=True)['Album']
-		logging.debug('Retrieved metadata for {ImageCount} images in album {URL}'.format(**album))
+	return target
 
-		return [{
-			'thumb': i['ThumbURL'], 
-		    'image': i['X2LargeURL'],
-		} for i in album['Images']]
+def get_album_with_images(username, album):
+	target = get_album(username, album)
 
+	# Request image list for target album from API
+	logging.debug('Requesting images for album {URL}'.format(**target))
+	images = smugmug.images_get(AlbumID=target['id'], AlbumKey=target['Key'], Heavy=True)
+	logging.debug('Received metadata for {ImageCount} images in album {URL}'.format(**images['Album']))
 
-	def add_smugmug_article(self, generator):
-		for article in generator.articles:
-			if not 'smugmug' in article.metadata.keys():
-				continue
+	target['Images'] = images['Album']['Images']
+	
+	return target
 
-			self.users.add(_get_user_for_article(generator, article))
+def get_images(username, album, attribute_map=None):
+	target = get_album_with_images(username, album)
+	images = []
 
-			album = self.albums[article.metadata.get('smugmug')]
+	if attribute_map:
+		for image in target['Images']:
+			# META: This could be a dictionary comprehension
+			images.append({})
 
-			article.album = self.albums[article.metadata.get('smugmug')]['Title']
-			article.galleryimages = self._process_album(albumname,user)
-		
-	def add_smugmug_page(self, generator, user):
-		pass
+			for dst, src in image_attribute_map[attribute_map].iteritems():
+				images[-1][dst] = image[src]
+	else:
+		images = target['Images']
+	
+	return images
 
+def get_username(settings, item):
+	username = None
 
-if __name__ == '__main__':
-	client = SmugMugClient()
-	client.users.add('jdleslie')
-	#client.users.add('katarzyna')
+	if 'smugmug-user' in item.keys():
+		# Defined in item metadata
+		username = item.get('smugmug-user')
+	elif re.match(r'^http://([\w]+)\.smugmug.com/.*', item.get('smugmug')):
+		# Implicitly defined in specified URL
+		username = _.group(1)
+	elif 'SMUGMUG_DEFAULT_USER' in settings.keys():
+		# Defined in configuration
+		logging.debug('Using default user for %s' % item.get('smugmug'))
+		username = settings.get('SMUGMUG_DEFAULT_USER')
+	else:
+		raise Exception('Cannot determine user for %s' % meta.get('smugmug'))
 
-	for url, album in client.albums.iteritems():
-		print album['id'], url
-		client._process_album(url)
+def add_smugmug_item(generator, item_collection):
+	has_smugmug_metadata = lambda item: 'smugmug' in item.metadata.keys()
 
-def _get_user_for_article(generator, article):
-	user = None
-	with article.metadata as meta:
+	for item in filter(has_smugmug_metadata, item_collection):
+		username = get_username(generator.settings, item.metadata)
+		album = get_album(username, item.metadata.get('smugmug'))
+		item.album = album['Title']
+		item.images = get_images(username, album['Key'])
 
-		# User specified explicitly in article metadata
-		if 'smugmug-user' in meta.keys():
-			user = meta.get('smugmug-user')
+def persist_api_cache(pelican):
+	if cache:
+		logging.debug('Closing SmugMug API cache')
+		cache.close()
 
-		# User parsed from album URL
-		elif re.match(r'^https?://([\w]+)\.smugmug.com/.*', meta.get('smugmug')):
-			user = _.group(1)
+def init_api(pelican):
+	logging.debug('Initializing SmugMug API')
+	settings = pelican.settings
+	settings.setdefault('SMUGMUG_CACHE', 
+						os.path.join(settings['CACHE_PATH'], 'smugmug'))
+	cache = percache.Cache(settings['SMUGMUG_CACHE'])
 
-		# Configured default used
-		elif 'SMUGMUG_DEFAULT_USER' in generator.settings.keys():
-			logging.debug('Using default user for %s' % meta.get('smugmug'))
-			user = generator.settings.get('SMUGMUG_DEFAULT_USER')
-
-		# Raise error if no user can be determined
-		else:
-			raise Exception('Cannot determine user for %s' % meta.get('smugmug'))
-
-	return user
-
-
-def _get_album_url(url):
-	file = os.path.basename(url)
-	file = re.sub(r'([^?]*)\?.*', r'\1', file)
-	file = not '.' in file or ''
-	return os.path.join(os.path.dirname(url), file)
-
-#re.sub(r'(.*)/(?:([^.]*)|.*)\??.*', r'\1\2', 'http://example.com/a/b/c/d.htm?aaa')
-
+	smugmug = SmugMugCache(api_key=settings['SMUGMUG_API_KEY'])
 
 def register():
-    signals.article_generator_finalized.connect(add_smugmug_article)
-    signals.page_generator_finalized.connect(add_smugmug_page)
+	signals.article_generator_finalized.connect(
+    	lambda generator: add_smugmug_item(generator, generator.articles))
+	signals.page_generator_finalized.connect(
+	    lambda generator: add_smugmug_item(generator, generator.pages))
 
+	signals.initialized.connect(init_api)
+	signals.finalized.connect(persist_api_cache)
+
+if __name__ == '__main__':
+	import sys, string
+
+	cache = percache.Cache('cache')
+	smugmug = SmugMugCache(api_key=SMUGMUG_API_KEY)
+
+	username = sys.argv[1]
+	album_title = string.join(sys.argv[2:])
+
+	# Print list of albums for user
+	albums = smugmug.albums_get(NickName=username, Heavy=True)
+	for album in albums["Albums"]:
+		print("%s, %s" % (album["id"], album["URL"]))
+
+	# Return image metadata for specified album
+	for image in get_images(username, album_title, 'gallery'):
+		print image
+
+	cache.close()
+	sys.exit(0)
