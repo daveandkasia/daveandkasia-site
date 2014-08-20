@@ -138,15 +138,24 @@ def get_username(settings, item):
 		username = settings.get('SMUGMUG_DEFAULT_USER')
 	else:
 		raise Exception('Cannot determine user for %s' % meta.get('smugmug'))
+	
+	return username
 
-def add_smugmug_item(generator, item_collection):
+def add_smugmug_item(generator, item_collection, metadata=None):
 	has_smugmug_metadata = lambda item: 'smugmug' in item.metadata.keys()
-
+	print "called item!"
 	for item in filter(has_smugmug_metadata, item_collection):
 		username = get_username(generator.settings, item.metadata)
-		album = get_album(username, item.metadata.get('smugmug'))
-		item.album = album['Title']
-		item.images = get_images(username, album['Key'])
+		item.metadata['album'] = get_album_with_images(username, item.metadata.get('smugmug'))
+		print "hi there!"
+		#item.album = album['Title']
+		#item.images = get_images(username, album['Key'])
+
+def add_smugmug_album(generator, metadata):
+	import copy
+	if 'smugmug' in metadata.keys():
+		username = get_username(generator.settings, metadata)
+		metadata['album'] = get_album_with_images(username, metadata.get('smugmug'))
 
 def persist_api_cache(pelican):
 	if cache:
@@ -154,6 +163,7 @@ def persist_api_cache(pelican):
 		cache.close()
 
 def init_api(pelican):
+	global cache, smugmug
 	logging.debug('Initializing SmugMug API')
 	settings = pelican.settings
 	settings.setdefault('SMUGMUG_CACHE', 
@@ -163,12 +173,9 @@ def init_api(pelican):
 	smugmug = SmugMugCache(api_key=settings['SMUGMUG_API_KEY'])
 
 def register():
-	signals.article_generator_finalized.connect(
-    	lambda generator: add_smugmug_item(generator, generator.articles))
-	signals.page_generator_finalized.connect(
-	    lambda generator: add_smugmug_item(generator, generator.pages))
-
 	signals.initialized.connect(init_api)
+	signals.article_generator_context.connect(add_smugmug_album)
+	signals.page_generator_context.connect(add_smugmug_album)
 	signals.finalized.connect(persist_api_cache)
 
 if __name__ == '__main__':
@@ -186,8 +193,9 @@ if __name__ == '__main__':
 		print("%s, %s" % (album["id"], album["URL"]))
 
 	# Return image metadata for specified album
-	for image in get_images(username, album_title, 'gallery'):
-		print image
+	if len(album_title):
+		for image in get_images(username, album_title, 'gallery'):
+			print image
 
 	cache.close()
 	sys.exit(0)

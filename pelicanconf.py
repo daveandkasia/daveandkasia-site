@@ -61,7 +61,7 @@ add_static_path('extra/custom.css', 'assets/css/custom.css')
 add_static_path('lib/blueimp-gallery', 'assets', 'jquery.blueimp-gallery.min.js')
 add_static_path('lib/blueimp-gallery', 'assets', 'blueimp-gallery.min.css')
 add_static_path('lib/blueimp-gallery/img', 'assets/img')
-add_static_path('lib/bootstrap-gallery', 'assets', 'bootstrap-image-gallery.min.js')
+add_static_path('lib/bootstrap-gallery', 'assets', 'bootstrap-image-gallery.min.css')
 add_static_path('lib/bootstrap-gallery', 'assets', 'bootstrap-image-gallery.min.js')
 add_static_path('lib/bootstrap-gallery/img', 'assets/img')
 
