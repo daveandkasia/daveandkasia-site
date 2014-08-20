@@ -1,0 +1,13 @@
+{% extends "article.html" %}
+
+{% block title %}{{ article.title|striptags }} - {{ SITENAME }} Gallery{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="{{ SITEURL }}/assets/css/blueimp-gallery.min.css">
+<link rel="stylesheet" href="{{ SITEURL }}/assets/css/bootstrap-image-gallery.min.css">
+{% endblock %}
+
+{% block script %}
+<script src="{{ SITEURL }}/assets/js/jquery.blueimp-gallery.min.js"></script>
+<script src="{{ SITEURL }}/assets/js/bootstrap-image-gallery.min.js"></script>
+{% endblock %}

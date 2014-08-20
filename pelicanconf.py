@@ -23,14 +23,50 @@ DIRECT_TEMPLATES = ['index', 'archives', 'tags', 'categories']
 #TEMPLATE_PAGES = {'templates/some-categories.html': 'some-categories.html'}
 
 # Static files to copy
-EXTRA_PATH_METADATA = {
-  'extra/robots.txt': {'path': 'robots.txt'},
-  'extra/CNAME': {'path': 'CNAME'},
-}
-STATIC_PATHS = ('extra/robots.txt', 'extra/CNAME')
+EXTRA_PATH_METADATA = {}
+STATIC_PATHS = ()
+
+def add_static_path(src_path, dst_path, ext=None):
+    import os
+    from fnmatch import filter
+    from sets import Set
+    
+    global STATIC_PATHS, EXTRA_PATH_METADATA
+    
+    # Helper function to update EXTRA_PATH_METADATA
+    add_epm = lambda x, y: EXTRA_PATH_METADATA.update({x: {'path': y} })
+
+    # Handle individual files
+    if not os.path.isdir(src_path) and ext is None:
+        src_path, ext = os.path.split(src_path)
+
+    # Turn single extensions into lists of extensions  
+    ext_match = lambda files: files
+    if ext:
+        ext = isinstance(ext, (list, tuple, Set) ) and ext or (ext,)
+        ext_match = lambda files: Set([fn for e in ext for fn in filter(files, e) ])
+
+    # Traverse src_path looking for files that match ext glob(s)
+    for root, dirs, files in os.walk(src_path):
+        for file in ext_match(files):
+            src = os.path.join(root, file)
+            dst = os.path.join(dst_path, root[len(src_path)+1:], file)
+
+            STATIC_PATHS += (src,)
+            add_epm(src, dst)
+
+add_static_path('extra/robots.txt', 'robots.txt')
+add_static_path('extra/CNAME', 'CNAME')
+add_static_path('extra/custom.css', 'assets/css/custom.css')
+add_static_path('lib/blueimp-gallery', 'assets', 'jquery.blueimp-gallery.min.js')
+add_static_path('lib/blueimp-gallery', 'assets', 'blueimp-gallery.min.css')
+add_static_path('lib/blueimp-gallery/img', 'assets/img')
+add_static_path('lib/bootstrap-gallery', 'assets', 'bootstrap-image-gallery.min.js')
+add_static_path('lib/bootstrap-gallery', 'assets', 'bootstrap-image-gallery.min.js')
+add_static_path('lib/bootstrap-gallery/img', 'assets/img')
 
 # Theme/UI settings
-THEME = 'pelican-bootstrap3'
+THEME = 'lib/pelican-bootstrap3'
 BOOTSTRAP_THEME = 'flatly'
 HIDE_SIDEBAR = False 
 BOOTSTRAP_NAVBAR_INVERSE = False
@@ -40,7 +76,7 @@ DISPLAY_CATEGORIES_ON_MENU = True
 DISPLAY_PAGES_ON_MENU = False
 TYPOGRIFY = True
 
-#CUSTOM_CSS = 'custom.css'
+CUSTOM_CSS = 'assets/css/custom.css'
 FAVICON = None
 
 MENUITEMS = (
